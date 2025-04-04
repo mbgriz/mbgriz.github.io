@@ -6,15 +6,17 @@
     <title>Ponder</title>
     <style>
         body {
-            background-color: #0C061F;
+            background: #24004E;
             color: white;
             font-family: 'Times New Roman', serif;
             display: flex;
+            flex-direction: column;
             justify-content: center;
             align-items: center;
             height: 100vh;
             margin: 0;
             padding: 10px;
+            text-align: center;
         }
         @media (min-width: 600px) {
             body {
@@ -23,11 +25,314 @@
         }
         p {
             font-size: 18px;
-            text-align: center;
+        }
+        .logo-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-grow: 1;
+        }
+        #particleCanvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+        }
+        #flashBar {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            height: 50px;
+            width: 100%;
+            z-index: 2;
+            background-color: transparent;
+            pointer-events: none;
+            transform: scaleY(0);
+            transform-origin: bottom;
+            transition: transform 0.3s ease-in-out;
+            border-top-left-radius: 50% 100%;
+            border-top-right-radius: 50% 100%;
+            overflow: hidden;
         }
     </style>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Geologica&display=swap" rel="stylesheet">
 </head>
 <body>
-    <p><img src="img/ponder.png" alt="Ponder"><br/><br/><b>ponder (v.)</b> : to think carefully and deeply, especially before making a decision.</p>
+    <canvas id="particleCanvas"></canvas>
+    <div id="flashBar"></div>
+    <div class="logo-container">
+        <h1 style="font-family: 'Geologica', sans-serif; font-size: 9vw; user-select: none; letter-spacing: -0.045em;">Ponder</h1>
+    </div>
+    <script>
+(function() {
+    const canvas = document.getElementById('particleCanvas');
+    const speciesDebugEl = document.getElementById('speciesDebug');
+    const ctx = canvas.getContext('2d');
+    let width, height;
+    let mouseX = -1;
+    let mouseY = -1;
+
+    // Species variables
+    let currentSpecies = 1;  // initial species: 1 (red) and 2 (blue)
+    let nextSpecies = 3;     // next available species ID for mutations
+    const speciesColors = {
+        1: '#3B0B71',  // deep purple for species 1
+        2: '#0000FF'   // blue for species 2
+    };
+
+    // Predefined palette of 500 distinct HSL-based colors with increased hue steps for stronger contrast
+    const colorPalette = Array.from({ length: 500 }, (_, i) => {
+        const hue = (i * 47) % 360; // Larger step between hues for stronger contrast
+        const saturation = 100;
+        const lightness = 50;
+        return hslToHex(hue, saturation, lightness);
+    });
+
+    function hslToHex(h, s, l) {
+        s /= 100;
+        l /= 100;
+        const k = n => (n + h / 30) % 12;
+        const a = s * Math.min(l, 1 - l);
+        const f = n => {
+            const color = l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+            return Math.round(255 * color).toString(16).padStart(2, '0');
+        };
+        return `#${f(0)}${f(8)}${f(4)}`;
+    }
+
+    let paletteIndex = 0;
+
+    // Unlocked species array for cycling
+    let unlockedSpecies = [1, 2];
+
+    // Utility: inheritColors - generate a new hex color by inheriting only the first, third, and sixth digits from parent's colors
+    // and restricting the digits to numeric values (0-9), yielding exactly 1000 possible colors
+    function inheritColors() {
+        if (paletteIndex >= colorPalette.length) {
+            paletteIndex = 0; // Wrap if all colors used
+        }
+        return colorPalette[paletteIndex++];
+    }
+
+    // Configuration for the grid
+    const tileSize = Math.round(15 * 1.25);
+    let tiles = [];
+    let gridCols, gridRows;
+
+    // Initialize or reinitialize the grid of tiles, covering the entire canvas edge-to-edge
+    function initTiles() {
+        tiles = [];
+        gridCols = Math.ceil(width / tileSize);
+        gridRows = Math.ceil(height / tileSize);
+        
+        for (let r = 0; r < gridRows; r++) {
+            for (let c = 0; c < gridCols; c++) {
+                tiles.push({
+                    x: c * tileSize,
+                    y: r * tileSize,
+                    alive: 0,      // 0 = dead; if alive, the value is the species ID
+                    nextAlive: 0,
+                    wasAlive: false,
+                    deathTime: null,
+                    lastSpecies: null
+                });
+            }
+        }
+    }
+
+    function resizeCanvas() {
+        width = canvas.width = window.innerWidth;
+        height = canvas.height = window.innerHeight;
+        initTiles();
+    }
+
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    // On mouse move, set the tile under the mouse to the current species
+    document.addEventListener('mousemove', function(e) {
+        mouseX = e.clientX;
+        mouseY = e.clientY;
+        const col = Math.floor(mouseX / tileSize);
+        const row = Math.floor(mouseY / tileSize);
+        const index = row * gridCols + col;
+        if (index >= 0 && index < tiles.length) {
+            tiles[index].alive = currentSpecies;
+        }
+    });
+
+    document.addEventListener('touchstart', handleTouch, { passive: false });
+    document.addEventListener('touchmove', handleTouch, { passive: false });
+    function handleTouch(e) {
+        e.preventDefault();
+        const touch = e.touches[0];
+        mouseX = touch.clientX;
+        mouseY = touch.clientY;
+        const col = Math.floor(mouseX / tileSize);
+        const row = Math.floor(mouseY / tileSize);
+        const index = row * gridCols + col;
+        if (index >= 0 && index < tiles.length) {
+            tiles[index].alive = currentSpecies;
+        }
+    }
+
+    // On click, cycle through all unlocked species
+    document.addEventListener('click', function(e) {
+        let currentIndex = unlockedSpecies.indexOf(currentSpecies);
+        currentSpecies = unlockedSpecies[(currentIndex + 1) % unlockedSpecies.length];
+
+        const bar = document.getElementById('flashBar');
+        bar.style.left = '0';
+        bar.style.backgroundColor = speciesColors[currentSpecies];
+
+        bar.style.transition = 'none';
+        bar.style.transform = 'scaleY(1';
+        void bar.offsetWidth;
+        bar.style.transition = 'transform 0.3s ease-in-out';
+        bar.style.transform = 'scaleY(0)';
+    });
+
+    // Update the simulation using the biodiversity rules
+    function updateSimulation() {
+        for (let r = 0; r < gridRows; r++) {
+            for (let c = 0; c < gridCols; c++) {
+                const index = r * gridCols + c;
+                let totalNeighbors = 0;
+                let neighborSpecies = [];
+
+                // Count all live neighbors and record their species
+                for (let i = -1; i <= 1; i++) {
+                    for (let j = -1; j <= 1; j++) {
+                        if (i === 0 && j === 0) continue;
+                        const nr = r + i;
+                        const nc = c + j;
+                        if (nr >= 0 && nr < gridRows && nc >= 0 && nc < gridCols) {
+                            const neighborIndex = nr * gridCols + nc;
+                            const species = tiles[neighborIndex].alive;
+                            if (species !== 0) {
+                                totalNeighbors++;
+                                neighborSpecies.push(species);
+                            }
+                        }
+                    }
+                }
+
+                // Survival: a live cell survives if it has 2 or 3 live neighbors, regardless of species
+                if (tiles[index].alive !== 0) {
+                    if (totalNeighbors === 2 || totalNeighbors === 3) {
+                        tiles[index].nextAlive = tiles[index].alive;
+                    } else {
+                        tiles[index].nextAlive = 0;
+                    }
+                } else {
+                    // Birth: dead cell with exactly 3 live neighbors
+                    if (totalNeighbors === 3) {
+                        // If all three neighbors are the same species, inherit that species
+                        if (neighborSpecies[0] === neighborSpecies[1] && neighborSpecies[0] === neighborSpecies[2]) {
+                            tiles[index].nextAlive = neighborSpecies[0];
+                        } else {
+                            // Otherwise, with a 30% chance, create a mutation by inheriting colors
+                            if (Math.random() < 0.3) {
+                                const newColor = inheritColors();
+                                tiles[index].nextAlive = nextSpecies;
+                                speciesColors[nextSpecies] = newColor;
+                                unlockedSpecies.push(nextSpecies);
+                                nextSpecies++;
+                            } else {
+                                // Otherwise, use majority rule: if two neighbors are the same, choose that species
+                                if (neighborSpecies[0] === neighborSpecies[1] || neighborSpecies[0] === neighborSpecies[2]) {
+                                    tiles[index].nextAlive = neighborSpecies[0];
+                                } else if (neighborSpecies[1] === neighborSpecies[2]) {
+                                    tiles[index].nextAlive = neighborSpecies[1];
+                                } else {
+                                    // If all three neighbors are different, choose one randomly
+                                    tiles[index].nextAlive = neighborSpecies[Math.floor(Math.random() * 3)];
+                                }
+                            }
+                        }
+                    } else {
+                        tiles[index].nextAlive = 0;
+                    }
+                }
+            }
+        }
+        
+        // Update all cells simultaneously
+        for (let i = 0; i < tiles.length; i++) {
+            if (tiles[i].alive !== 0 && tiles[i].nextAlive === 0) {
+                tiles[i].wasAlive = true;
+                tiles[i].deathTime = Date.now();
+                tiles[i].lastSpecies = tiles[i].alive;
+            }
+            tiles[i].alive = tiles[i].nextAlive;
+        }
+    }
+
+    // Update the simulation every 200ms
+    setInterval(updateSimulation, 200);
+
+    function hexToRgba(hex, alpha) {
+        const bigint = parseInt(hex.slice(1), 16);
+        const r = (bigint >> 16) & 255;
+        const g = (bigint >> 8) & 255;
+        const b = bigint & 255;
+        return `rgba(${r},${g},${b},${alpha})`;
+    }
+
+    function animate() {
+        ctx.clearRect(0, 0, width, height);
+        
+        // Always draw the base background
+        ctx.fillStyle = '#24004E';
+        ctx.fillRect(0, 0, width, height);
+
+        // Draw each tile based on its species
+        for (let i = 0; i < tiles.length; i++) {
+            const tile = tiles[i];
+            if (tile.alive !== 0) {
+                ctx.fillStyle = speciesColors[tile.alive];
+            } else if (tile.wasAlive && tile.deathTime && tile.lastSpecies) {
+                const elapsed = Date.now() - tile.deathTime;
+                if (elapsed < 200) {
+                    const fade = 0.2 * (1 - elapsed / 200);
+                    ctx.fillStyle = hexToRgba(speciesColors[tile.lastSpecies], fade);
+                } else {
+                    ctx.fillStyle = "#24004E";
+                    tile.wasAlive = false;
+                    tile.deathTime = null;
+                    tile.lastSpecies = null;
+                }
+            } else {
+                ctx.fillStyle = "#24004E";
+            }
+            ctx.fillRect(tile.x, tile.y, tileSize, tileSize);
+        }
+        
+        // Count currently living species
+        const livingSpecies = new Set();
+        for (let i = 0; i < tiles.length; i++) {
+            if (tiles[i].alive !== 0) {
+                livingSpecies.add(tiles[i].alive);
+            }
+        }
+
+        // Draw the species counter (number of living species)
+        if (livingSpecies.size > 1) {
+            ctx.font = "48px sans-serif";
+            ctx.fillStyle = "#FFFFFF";
+            ctx.textAlign = "center";
+            ctx.fillText(livingSpecies.size.toString(), width / 2, height * 0.75);
+        }
+        
+        requestAnimationFrame(animate);
+    }
+
+    animate();
+})();
+</script>
 </body>
 </html>
